@@ -50,80 +50,136 @@ export default function App() {
   });
   const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date());
 
-  // Data fetching routine
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [retryCount, setRetryCount] = useState<number>(0);
+
+  // Data fetching routine using atomic /sync with graceful degradation
   const loadAllData = useCallback(async (isSilent = false) => {
     if (!isSilent) setLoading(true);
     else setRefreshing(true);
-    setError(null);
 
     try {
-      const [
-        kpisData,
-        productsData,
-        stockData,
-        locationsData,
-        movementsData,
-        ordersData,
-        usersData,
-        settingsData,
-      ] = await Promise.all([
-        api.getDashboardKPIs(),
-        api.getProducts(),
-        api.getStock(),
-        api.getLocations(),
-        api.getMovements(),
-        api.getPickingOrders(),
-        api.getUsers(),
-        api.getSettings(),
-      ]);
+      // Primary: Fast single-trip synchronization
+      const syncData = await api.syncAll();
 
-      setKpis(kpisData);
-      setProducts(productsData);
-      setStock(stockData);
-      setLocations(locationsData);
-      setMovements(movementsData);
-      setPickingOrders(ordersData);
-      setUsers(usersData);
-      setSettings(settingsData);
+      setKpis(syncData.kpis);
+      setProducts(syncData.products);
+      setStock(syncData.stock);
+      setLocations(syncData.locations);
+      setMovements(syncData.movements);
+      setPickingOrders(syncData.pickingOrders);
+      setUsers(syncData.users);
+      setSettings(syncData.settings);
 
       // Default user to Marina Morato if available
-      const foundMarina = usersData.find((u: User) => u.name.toLowerCase().includes('marina'));
-      if (foundMarina && currentUser.name !== foundMarina.name) {
-        setCurrentUser(foundMarina);
+      const foundMarina = syncData.users.find((u: User) => u.name.toLowerCase().includes('marina'));
+      if (foundMarina) {
+        setCurrentUser((prev) => (prev.id === foundMarina.id ? prev : foundMarina));
       }
 
       setLastSyncTime(new Date());
+      setIsOnline(true);
+      setError(null);
+      setRetryCount(0);
     } catch (err: any) {
-      console.error('Erro ao carregar dados do WMS:', err);
-      setError('Não foi possível sincronizar os dados com o servidor WMS. Verifique a conexão.');
+      console.warn('Erro ao sincronizar via /sync, tentando fallback:', err);
+      try {
+        // Fallback: individual endpoints
+        const [
+          kpisData,
+          productsData,
+          stockData,
+          locationsData,
+          movementsData,
+          ordersData,
+          usersData,
+          settingsData,
+        ] = await Promise.all([
+          api.getDashboardKPIs(),
+          api.getProducts(),
+          api.getStock(),
+          api.getLocations(),
+          api.getMovements(),
+          api.getPickingOrders(),
+          api.getUsers(),
+          api.getSettings(),
+        ]);
+
+        setKpis(kpisData);
+        setProducts(productsData);
+        setStock(stockData);
+        setLocations(locationsData);
+        setMovements(movementsData);
+        setPickingOrders(ordersData);
+        setUsers(usersData);
+        setSettings(settingsData);
+        setLastSyncTime(new Date());
+        setIsOnline(true);
+        setError(null);
+      } catch (fallbackErr: any) {
+        console.error('Falha na sincronização WMS:', fallbackErr);
+        setIsOnline(false);
+        setError('Falha de conexão com o servidor WMS. Tentando reconectar automaticamente...');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [currentUser.name]);
+  }, []);
 
-  // Initial load
+  // Initial load with immediate retry if needed
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
 
-  // Polling every 15 seconds for real-time warehouse sync
+  // Online / focus event listeners for automatic recovery
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      loadAllData(true);
+    };
+    const handleFocus = () => {
+      loadAllData(true);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [loadAllData]);
+
+  // Polling every 12 seconds for real-time warehouse sync
   useEffect(() => {
     const interval = setInterval(() => {
       loadAllData(true);
-    }, 15000);
+    }, 12000);
     return () => clearInterval(interval);
   }, [loadAllData]);
 
   if (loading && !products.length) {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-4">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-10 h-10 text-blue-500 animate-spin" />
-          <h2 className="text-base font-bold tracking-tight">Carregando Sistema WMS Enterprise...</h2>
-          <p className="text-xs text-slate-400">
-            Sincronizando inventário em tempo real e mapa de endereçamento
-          </p>
+      <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-6 text-center">
+        <div className="flex flex-col items-center gap-4 max-w-md">
+          <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
+          <div>
+            <h2 className="text-lg font-bold tracking-tight text-white">Iniciando WMS Enterprise...</h2>
+            <p className="text-xs text-slate-400 mt-1">
+              Conectando aos serviços de estoque em tempo real e endereçamento inteligente.
+            </p>
+          </div>
+          {error && (
+            <div className="bg-slate-800 border border-slate-700 p-4 rounded-xl w-full text-xs text-slate-300 mt-2">
+              <p className="text-amber-400 font-medium mb-2">{error}</p>
+              <button
+                onClick={() => loadAllData()}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg inline-flex items-center gap-2 cursor-pointer transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" /> Reconectar Agora
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -139,22 +195,28 @@ export default function App() {
         users={users}
         onSelectUser={(u) => setCurrentUser(u)}
         settings={settings}
+        isOnline={isOnline}
+        isSyncing={refreshing}
+        onManualSync={() => loadAllData()}
       />
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        {/* Error Alert if any */}
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl flex items-center justify-between text-xs shadow-xs">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
-              <span>{error}</span>
+        {/* Connection Notice banner when offline/reconnecting */}
+        {!isOnline && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 p-3.5 rounded-xl flex items-center justify-between text-xs shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+              <div>
+                <span className="font-semibold">Serviço WMS desconectado temporariamente.</span>{' '}
+                <span className="text-amber-700">Tentando reconexão automática em segundo plano...</span>
+              </div>
             </div>
             <button
               onClick={() => loadAllData()}
-              className="bg-red-600 hover:bg-red-700 text-white font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
+              className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
             >
-              <RefreshCw className="w-3 h-3" /> Tentar Novamente
+              <RefreshCw className="w-3 h-3" /> Reconectar Agora
             </button>
           </div>
         )}

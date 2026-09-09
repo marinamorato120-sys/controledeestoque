@@ -17,6 +17,61 @@ router.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Real-Time Full State Sync (Consolidated WMS State in a single request)
+router.get('/sync', (_req: Request, res: Response) => {
+  try {
+    const db = loadDatabase();
+    const kpis = calculateKPIs(db);
+
+    const locationsWithOccupancy = db.locations.map((loc) => {
+      const items = db.stock.filter((s) => s.locationId === loc.id && s.quantity > 0);
+      const totalUnits = items.reduce((sum, item) => sum + item.quantity, 0);
+      const usedVol = items.reduce((sum, item) => {
+        const p = db.products.find((prod) => prod.id === item.productId);
+        return sum + (p ? p.volumeM3 * item.quantity : 0);
+      }, 0);
+      const usedWeight = items.reduce((sum, item) => {
+        const p = db.products.find((prod) => prod.id === item.productId);
+        return sum + (p ? p.weightKg * item.quantity : 0);
+      }, 0);
+
+      const occupancyPercent = loc.maxVolumeM3 > 0 ? Math.min(100, Math.round((usedVol / loc.maxVolumeM3) * 100)) : 0;
+
+      return {
+        ...loc,
+        itemsCount: items.length,
+        totalUnits,
+        usedVolumeM3: Math.round(usedVol * 1000) / 1000,
+        usedWeightKg: Math.round(usedWeight * 10) / 10,
+        occupancyPercent,
+        items: items.map((i) => ({
+          id: i.id,
+          sku: i.sku,
+          productName: i.productName,
+          lot: i.lot,
+          quantity: i.quantity,
+          status: i.status,
+        })),
+      };
+    });
+
+    res.json({
+      kpis,
+      products: db.products,
+      stock: db.stock,
+      locations: locationsWithOccupancy,
+      movements: db.movements,
+      pickingOrders: db.pickingOrders,
+      users: db.users,
+      settings: db.settings,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error('Error on /sync:', err);
+    res.status(500).json({ error: 'Erro interno ao sincronizar estado do armazém.' });
+  }
+});
+
 // Settings & Technical Manager
 router.get('/settings', (_req: Request, res: Response) => {
   const db = loadDatabase();

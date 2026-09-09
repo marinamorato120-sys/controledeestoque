@@ -11,30 +11,79 @@ import {
 
 const BASE_URL = '/api';
 
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BASE_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
+async function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-  if (!res.ok) {
-    let errorMsg = 'Erro na requisição ao servidor.';
+async function request<T>(endpoint: string, options: RequestInit = {}, retries = 2): Promise<T> {
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const data = await res.json();
-      errorMsg = data.error || errorMsg;
-    } catch {
-      // use default
+      const res = await fetch(`${BASE_URL}${endpoint}`, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+
+      if (!res.ok) {
+        let errorMsg = `Erro ${res.status} na requisição ao servidor.`;
+        try {
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const data = await res.json();
+            errorMsg = data.error || errorMsg;
+          }
+        } catch {
+          // ignore json parse error
+        }
+
+        // Only retry on 502, 503, 504 server warmup errors
+        if ((res.status === 502 || res.status === 503 || res.status === 504) && attempt < retries) {
+          await wait(400 * (attempt + 1));
+          continue;
+        }
+
+        throw new Error(errorMsg);
+      }
+
+      return await res.json();
+    } catch (err: any) {
+      lastError = err;
+      // Retry on network errors (e.g. Failed to fetch while server starts)
+      if (attempt < retries) {
+        await wait(400 * (attempt + 1));
+      }
     }
-    throw new Error(errorMsg);
   }
 
-  return res.json();
+  throw lastError || new Error('Falha de conexão com o servidor WMS.');
 }
 
 export const api = {
+  // Sync all in a single fast call
+  syncAll: () =>
+    request<{
+      kpis: WarehouseKPIs;
+      products: Product[];
+      stock: StockItem[];
+      locations: (WarehouseLocation & {
+        itemsCount: number;
+        totalUnits: number;
+        usedVolumeM3: number;
+        usedWeightKg: number;
+        occupancyPercent: number;
+        items: { id: string; sku: string; productName: string; lot: string; quantity: number; status: string }[];
+      })[];
+      movements: StockMovement[];
+      pickingOrders: PickingOrder[];
+      users: User[];
+      settings: WarehouseSettings;
+      timestamp: string;
+    }>('/sync'),
+
   // Settings & Users
   getSettings: () => request<WarehouseSettings>('/settings'),
   updateSettings: (settings: Partial<WarehouseSettings>) =>

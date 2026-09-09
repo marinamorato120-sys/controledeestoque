@@ -20,6 +20,9 @@ interface HeaderProps {
   users: User[];
   onSelectUser: (user: User) => void;
   settings: WarehouseSettings;
+  isOnline?: boolean;
+  isSyncing?: boolean;
+  onManualSync?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -29,6 +32,9 @@ export const Header: React.FC<HeaderProps> = ({
   users,
   onSelectUser,
   settings,
+  isOnline = true,
+  isSyncing = false,
+  onManualSync,
 }) => {
   const tabs = [
     { id: 'dashboard', label: 'Painel & KPIs', icon: LayoutDashboard },
@@ -77,10 +83,22 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             {/* Live Status indicator */}
-            <div className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 px-2.5 py-1.5 rounded-md">
-              <Wifi className="w-3.5 h-3.5 animate-pulse" />
-              <span className="font-medium">Online</span>
-            </div>
+            <button
+              onClick={onManualSync}
+              title={isOnline ? 'Conexão ativa em tempo real. Clique para forçar sincronização.' : 'Falha na conexão. Clique para reconectar.'}
+              className={`hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md transition-colors cursor-pointer ${
+                !isOnline
+                  ? 'text-amber-300 bg-amber-950/60 border border-amber-700/50 hover:bg-amber-900/60'
+                  : isSyncing
+                  ? 'text-blue-300 bg-blue-950/60 border border-blue-700/50'
+                  : 'text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 hover:bg-emerald-900/40'
+              }`}
+            >
+              <Wifi className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : isOnline ? 'animate-pulse' : 'text-amber-400'}`} />
+              <span className="font-medium">
+                {!isOnline ? 'Reconectar' : isSyncing ? 'Sincronizando...' : 'Online'}
+              </span>
+            </button>
 
             {/* User Switcher */}
             <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-lg p-1 text-xs">
