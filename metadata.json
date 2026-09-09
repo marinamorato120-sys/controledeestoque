@@ -1,0 +1,6 @@
+{
+  "name": "Sistema de Gestão de Armazém (WMS)",
+  "description": "Sistema completo de gestão de armazém com controle de estoque em tempo real, endereçamento inteligente, picking & packing, mapa 2D interativo e relatórios de auditoria em PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
